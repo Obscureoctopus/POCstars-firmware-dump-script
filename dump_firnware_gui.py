@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-import subprocess
 import os
-from datetime import datetime
 import sys
+
+import dump_firmware
 
 class H18DumperGUI:
     def __init__(self):
@@ -69,49 +69,46 @@ class H18DumperGUI:
 
     def check_device(self):
         self.log_message("Checking ADB device...")
-        try:
-            result = subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=10)
-            if "device" in result.stdout and len(result.stdout.splitlines()) > 1:
-                self.log_message("✅ Device detected!", "green")
-                self.status.set("Device OK - Ready to dump")
-            else:
-                self.log_message("❌ No device detected. Connect in Recovery mode.", "red")
-        except Exception as e:
-            self.log_message(f"Error: {e}", "red")
+        devices = dump_firmware.list_connected_devices()
+        if not devices:
+            self.log_message("❌ No device detected. Connect in Recovery mode.", "red")
+            self.status.set("No device detected")
+            return
+
+        self.log_message(f"✅ Device detected: {', '.join(devices)}", "green")
+        available_partitions = dump_firmware.discover_partition_paths()
+        if available_partitions:
+            preferred = [part for part in dump_firmware.DEFAULT_PARTITIONS if part in available_partitions]
+            if preferred:
+                self.partitions_var.set(",".join(preferred))
+            self.log_message(
+                f"Available partitions: {', '.join(sorted(available_partitions))}",
+                "green",
+            )
+        else:
+            self.log_message("⚠️  Could not read partition directories from the device.", "orange")
+        self.status.set("Device OK - Ready to dump")
 
     def start_dump(self):
         partitions = [p.strip() for p in self.partitions_var.get().split(",") if p.strip()]
-        output_dir = os.path.join(self.folder_var.get(), 
-                                f"h18_dump_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-        
-        os.makedirs(output_dir, exist_ok=True)
-        self.log_message(f"📁 Dumping to: {output_dir}")
+        if not partitions:
+            messagebox.showerror("Error", "Enter at least one partition to dump.")
+            return
 
-        success_count = 0
-        for part in partitions:
-            self.log_message(f"Pulling {part}.img ...")
-            try:
-                src = f"/dev/block/by-name/{part}"
-                dest = os.path.join(output_dir, f"{part}.img")
-                
-                result = subprocess.run(["adb", "pull", src, dest], 
-                                     capture_output=True, text=True, timeout=60)
-                
-                if result.returncode == 0 and os.path.exists(dest) and os.path.getsize(dest) > 0:
-                    self.log_message(f"✅ {part}.img saved.", "green")
-                    success_count += 1
-                else:
-                    self.log_message(f"⚠️  Failed to pull {part}.img", "orange")
-            except subprocess.TimeoutExpired:
-                self.log_message(f"⏰ Timeout pulling {part}.img", "red")
-            except Exception as e:
-                self.log_message(f"❌ Error pulling {part}: {e}", "red")
+        dump_dir, success_count = dump_firmware.dump_partitions(
+            partitions,
+            self.folder_var.get(),
+            log=self.log_message,
+        )
+        if dump_dir is None:
+            messagebox.showerror("Error", "Could not read partitions from the connected device.")
+            return
 
         self.log_message(f"\n✅ Done! {success_count}/{len(partitions)} partitions dumped.")
-        messagebox.showinfo("Complete", f"Dump finished!\n{success_count} partitions saved.\n\nCheck: {output_dir}")
+        messagebox.showinfo("Complete", f"Dump finished!\n{success_count} partitions saved.\n\nCheck: {dump_dir}")
 
 if __name__ == "__main__":
-    if not shutil.which("adb"):   # you'll need to import shutil at top
+    if not dump_firmware.adb_available():
         messagebox.showerror("Error", "ADB not found in PATH!")
         sys.exit(1)
     
