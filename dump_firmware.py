@@ -41,13 +41,14 @@ def discover_partition_paths():
     partitions = {}
     for base_path in BLOCK_PATHS:
         out, err, code = run(["adb", "shell", "ls", base_path], timeout=30)
-        listing = out or err
-        if code != 0 or "No such file" in listing or "Permission denied" in listing:
+        if code != 0:
+            continue
+        if "No such file" in out or "Permission denied" in out or "No such file" in err or "Permission denied" in err:
             continue
 
         entries = []
-        for line in listing.replace("\r", "\n").splitlines():
-            entries.extend(part for part in line.split() if part not in {"total", ".", ".."})
+        for line in out.replace("\r", "\n").splitlines():
+            entries.extend(part for part in line.split() if part not in {".", ".."})
 
         if entries:
             for part in entries:
@@ -70,11 +71,11 @@ def create_dump_dir(base_output_dir=None):
 def dump_partitions(requested_partitions, base_output_dir=None, log=print):
     available_partitions = discover_partition_paths()
     if not available_partitions:
-        log("\nNo readable partition directory found on the connected device.")
+        log("No readable partition directory found on the connected device.")
         return None, 0
 
     dump_dir = create_dump_dir(base_output_dir)
-    log(f"\nDumping to: {dump_dir}")
+    log(f"Dumping to: {dump_dir}")
 
     success_count = 0
     for part in requested_partitions:
